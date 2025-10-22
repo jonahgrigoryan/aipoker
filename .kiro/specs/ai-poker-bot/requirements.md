@@ -105,6 +105,20 @@ This document specifies the requirements for an AI Poker Bot system that combine
 5. WHEN action verification detects a mismatch, THE Action Executor SHALL re-evaluate once then halt execution
 6. THE Action Executor SHALL support fold, check, call, and bet/raise actions with precise bet sizing through the configured interface
 
+### Requirement 5.7 (NEW)
+
+**User Story:** As an operator using research UI mode, I want the bot to detect poker windows and execute actions by clicking buttons when it's my turn
+
+#### Acceptance Criteria
+
+1. THE system SHALL detect opened poker GUI windows by title/process name patterns
+2. THE system SHALL validate detected windows against allowlist before interaction
+3. THE system SHALL identify when it is the hero's turn to act
+4. THE system SHALL locate action buttons (fold, check, call, raise) on screen with >99% accuracy
+5. THE system SHALL convert layout ROI coordinates to screen coordinates for clicking
+6. THE system SHALL execute actions through mouse clicks with randomized timing (1-3s)
+7. WHEN button detection fails, THE system SHALL fall back to SafeAction and alert operator
+
 ### Requirement 6
 
 **User Story:** As a poker analyst, I want comprehensive logging of all game states and decisions, so that I can analyze bot performance and improve strategies

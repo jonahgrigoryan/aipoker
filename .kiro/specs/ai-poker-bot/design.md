@@ -44,6 +44,7 @@ graph TB
     subgraph Execution
         Executor[Action Executor]
         Verifier[Action Verifier]
+        WindowMgr[Window Manager]
     end
     
     subgraph Support
@@ -68,6 +69,7 @@ graph TB
     BudgetTracker --> GTO
     BudgetTracker --> Coordinator
     Engine --> Executor
+    WindowMgr --> Executor
     Executor --> Verifier
     Verifier --> Logger
     Parser --> Logger
@@ -104,7 +106,8 @@ graph TB
    - Logs divergence if recommendations differ >30pp
 
 4. **Execution Phase** (Target: 30ms total)
-   - Action Executor sends command via simulator/API (or research UI if configured)
+   - Window Manager detects/validates poker window (research UI mode only)
+   - Action Executor sends command via simulator/API, or clicks buttons via research UI
    - Action Verifier compares post-action state to expected state
    - On mismatch: re-evaluate once, then halt
 
@@ -225,6 +228,24 @@ interface VisionOutput {
   buttons: { dealer: Position; confidence: number };
   positions: { confidence: number };  // confidence in position assignments
   occlusion: Map<ROI, number>;  // percentage occluded per region
+
+  // NEW: Action buttons for research UI mode
+  actionButtons?: {
+    fold?: ButtonInfo;
+    check?: ButtonInfo;
+    call?: ButtonInfo;
+    raise?: ButtonInfo;
+    bet?: ButtonInfo;
+    allIn?: ButtonInfo;
+  };
+
+  // NEW: Turn state detection for research UI mode
+  turnState?: {
+    isHeroTurn: boolean;
+    actionTimer?: number;  // seconds remaining
+    confidence: number;
+  };
+
   latency: {
     capture: number;
     extraction: number;
@@ -232,11 +253,23 @@ interface VisionOutput {
   };
 }
 
+interface ButtonInfo {
+  screenCoords: ScreenCoords;
+  isEnabled: boolean;
+  isVisible: boolean;
+  confidence: number;
+  text?: string;  // button label
+}
+
 class VisionSystem {
   captureFrame(): Promise<Frame>;
   extractGameElements(frame: Frame, layout: LayoutPack): VisionOutput;
   calibrateDPI(frame: Frame): number;
   loadLayoutPack(name: string): LayoutPack;
+
+  // NEW: Research UI specific methods
+  detectActionButtons(frame: Frame, layout: LayoutPack): Promise<Map<string, ButtonInfo>>;
+  detectTurnState(frame: Frame, layout: LayoutPack): Promise<{ isHeroTurn: boolean; actionTimer?: number; confidence: number }>;
 }
 ```
 
@@ -245,6 +278,58 @@ class VisionSystem {
 - Confidence gating happens at Parser level to keep Vision System pure extraction
 - Latency tracking uses high-resolution timers (performance.now() or equivalent)
 - Template matching for cards uses precomputed hash tables for speed
+
+**LayoutPack Schema** (Extended for Research UI):
+```typescript
+interface LayoutPack {
+  version: string;
+  platform: string;  // poker client/platform name
+  dpiCalibration: number;
+
+  // Existing game element ROIs
+  cardROIs: ROI[];
+  stackROIs: Map<Position, ROI>;
+  potROI: ROI;
+  buttonROI: ROI;
+
+  // NEW: Action button ROIs for research UI mode
+  actionButtonROIs: {
+    fold: ROI;
+    check: ROI;
+    call: ROI;
+    raise: ROI;
+    bet: ROI;
+    allIn: ROI;
+  };
+
+  // NEW: Turn state detection ROI
+  turnIndicatorROI: ROI;
+
+  // NEW: Window detection patterns
+  windowPatterns: {
+    titleRegex: string;
+    processName: string;
+    className?: string;
+  };
+
+  // NEW: Button template images for detection
+  buttonTemplates: {
+    fold: ImageData;
+    check: ImageData;
+    call: ImageData;
+    raise: ImageData;
+    allIn: ImageData;
+  };
+}
+
+interface ROI {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  relative?: boolean;  // true if coordinates are relative to window bounds
+}
+```
 
 ---
 
@@ -450,6 +535,46 @@ class TimeBudgetTracker {
 
 ---
 
+### 6.5 Window Manager (Research UI Mode)
+
+**Responsibility**: Detect poker GUI windows, manage window focus, convert coordinates for research UI mode
+
+**Interface**:
+```typescript
+interface WindowInfo {
+  windowId: string;
+  title: string;
+  bounds: { x: number; y: number; width: number; height: number };
+  isForeground: boolean;
+  processName: string;
+  platform: 'windows' | 'linux' | 'macos';
+}
+
+interface ScreenCoords {
+  x: number;
+  y: number;
+  confidence: number;
+}
+
+class WindowManager {
+  findPokerWindows(): Promise<WindowInfo[]>;
+  getActivePokerWindow(): Promise<WindowInfo | null>;
+  bringToForeground(windowId: string): Promise<void>;
+  isWindowValid(window: WindowInfo, config: BotConfig): boolean;
+  convertROIToScreenCoords(roi: ROI, layout: LayoutPack, window: WindowInfo): ScreenCoords;
+  waitForWindowChange(timeoutMs: number): Promise<WindowInfo | null>;
+}
+```
+
+**Design Decisions**:
+- Window detection uses platform-specific APIs (Windows: EnumWindows, Linux: xdotool, macOS: Accessibility APIs)
+- Strict validation against process names and title patterns from layout packs
+- Coordinate conversion accounts for DPI scaling and window positioning
+- Focus management prevents interaction with background windows
+- Window change detection for post-action verification
+
+---
+
 ### 7. Risk Guard
 
 **Responsibility**: Enforce bankroll and session limits before action execution
@@ -571,13 +696,58 @@ interface ExecutionResult {
 }
 
 class ActionExecutor {
+  private windowManager: WindowManager;
+
+  constructor(windowManager: WindowManager) {
+    this.windowManager = windowManager;
+  }
+
   execute(decision: StrategyDecision, mode: ExecutionMode): Promise<ExecutionResult>;
-  
+
   // Mode-specific implementations
   executeSimulator(action: Action): Promise<void>;
   executeAPI(action: Action): Promise<void>;
-  executeResearchUI(action: Action): Promise<void>;
-  
+
+  // Enhanced Research UI implementation
+  async executeResearchUI(action: Action, gameState: GameState): Promise<void> {
+    // 1. Detect/validate poker window
+    const window = await this.windowManager.getActivePokerWindow();
+    if (!window || !this.isValidPokerWindow(window)) {
+      throw new ComplianceError('No valid poker window detected');
+    }
+
+    // 2. Ensure window is foreground
+    await this.windowManager.bringToForeground(window.windowId);
+
+    // 3. Wait for turn (if not already hero's turn)
+    await this.waitForHeroTurn(gameState, window);
+
+    // 4. Map action to button and click
+    const buttonCoords = this.getButtonCoordinates(action, gameState.visionOutput, window);
+    await this.clickButton(buttonCoords, action);
+
+    // 5. Add randomized delay to simulate human behavior
+    await this.addHumanDelay();
+  }
+
+  private async waitForHeroTurn(gameState: GameState, window: WindowInfo): Promise<void> {
+    // Poll vision system until turnState.isHeroTurn = true
+    // Timeout after reasonable period
+  }
+
+  private getButtonCoordinates(action: Action, vision: VisionOutput, window: WindowInfo): ScreenCoords {
+    // Convert ROI coordinates to screen coordinates using window bounds
+  }
+
+  private async clickButton(coords: ScreenCoords, action: Action): Promise<void> {
+    // OS-level mouse click at coordinates
+    // Handle bet sizing by entering amounts in raise fields
+  }
+
+  private isValidPokerWindow(window: WindowInfo): boolean {
+    // Validate against config allowlist
+  }
+
   verifyExecution(
     expectedAction: Action,
     postActionState: GameState

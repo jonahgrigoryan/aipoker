@@ -239,6 +239,25 @@
     - Implement bet sizing from discrete set
     - _Requirements: 5.6_
 
+  - [ ] 9.5 Implement Window Manager
+    - Create window detection using OS APIs (Windows: EnumWindows, Linux: xdotool)
+    - Add window validation against process names and titles
+    - Implement coordinate conversion from ROI to screen space
+    - _Requirements: 5.7.1, 5.7.2, 5.7.5_
+
+  - [ ] 9.6 Extend Vision System for action buttons
+    - Add template matching for action buttons (fold/check/call/raise)
+    - Implement turn state detection (timer, active player indicators)
+    - Update VisionOutput interface with button locations
+    - _Requirements: 5.7.3, 5.7.4_
+
+  - [ ] 9.7 Enhance research UI executor
+    - Implement window focus management
+    - Add turn waiting logic with timeout
+    - Create cross-platform mouse/keyboard automation
+    - Handle bet sizing input fields
+    - _Requirements: 5.7.6, 5.7.7_
+
 - [ ] 10. Implement Hand History Logger
   - [ ] 10.1 Create logging data structures
     - Define HandRecord interface with all required fields
