@@ -199,9 +199,9 @@ Implement:
   - Round to integers
 
 - `calibrateLayoutPack(pack: LayoutPack, targetDPI: number): LayoutPack`
-  - Calculate scale factor: `targetDPI / pack.dpiScale`
+  - Calculate scale factor: `targetDPI / pack.dpiCalibration`
   - Scale all ROIs in regions
-  - Update dpiScale field
+  - Update `dpiCalibration` to `targetDPI`
   - Return new LayoutPack
 
 ---
@@ -448,6 +448,8 @@ export interface ParsedGameState extends GameState {
   parseErrors: string[];
   missingElements: string[];
   inferredValues: Record<string, any>;
+  recommendedAction?: Action;
+  safeActionTriggered?: boolean;
 }
 
 export interface ParserConfig {
