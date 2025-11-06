@@ -1,11 +1,69 @@
 # Implementation Plan
 
+## Overview
+
+This implementation plan follows a phased approach to manage complexity and accelerate time-to-MVP:
+
+**Phase 1 (MVP)**: Precomputed GTO ranges + heuristics, 3 LLM agents, Windows-only research UI, custom simulator
+**Phase 2 (Optional)**: Full CFR solver, cross-platform support, advanced opponent modeling, 10M hand evaluation
+
+Task 0 establishes concrete technology decisions to eliminate ambiguity and enable immediate implementation.
+
+---
+
+- [ ] 0. Technology Stack and Architectural Decisions
+  - [ ] 0.1 Select runtime environment and primary language
+    - Decision: Node.js (v20 LTS) for main orchestrator, TypeScript for type safety
+    - Decision: Python 3.11 for vision and GTO solver microservices
+    - Rationale: Node.js handles async I/O well for LLM calls; Python ecosystem for vision/ML
+    - _Requirements: 0.1, 10.2_
+  
+  - [ ] 0.2 Select vision technology stack
+    - Decision: Python OpenCV 4.8+ for frame capture and preprocessing
+    - Decision: ONNX Runtime with pretrained CNN models for card/digit recognition
+    - Decision: Tesseract OCR 5.x as fallback for unsupported themes
+    - Decision: MSS (mss library) for cross-platform screen capture
+    - Model: Train/acquire ONNX models for 52-card classification (rank+suit) and digit recognition (0-9, K, M, B suffixes)
+    - Rationale: OpenCV is industry standard, ONNX enables model portability, Tesseract provides fallback
+    - _Requirements: 1.1, 1.3, 1.5_
+  
+  - [ ] 0.3 Select GTO solver approach and implementation strategy
+    - Decision Phase 1: Use precomputed range charts for preflop (export from PioSOLVER/GTO+ or use published ranges)
+    - Decision Phase 1: Implement rule-based postflop heuristics (c-bet frequency, equity-based decisions, pot odds)
+    - Decision Phase 2 (optional): Integrate open-source CFR library (OpenSpiel, PokerKit) for subgame solving
+    - Rationale: Precomputed + heuristics gets MVP running fast; defer full CFR to phase 2 after validation
+    - Budget: Allow 400ms for cache lookup + heuristic calculation initially
+    - _Requirements: 2.1, 2.2, 2.6_
+  
+  - [ ] 0.4 Select LLM providers and models
+    - Decision: OpenAI GPT-4o-mini as primary agent (cost-effective, fast)
+    - Decision: Anthropic Claude 3.5 Haiku as secondary agent (diversity)
+    - Decision: OpenAI GPT-4o as third agent (higher reasoning, used selectively)
+    - Cost cap: $0.10 per hand maximum (agent prompts ~500 tokens input, ~100 tokens output each)
+    - Rationale: Mix of speed and capability; Haiku adds architectural diversity; cost-controlled
+    - _Requirements: 3.1, 3.2_
+  
+  - [ ] 0.5 Select initial platform support scope
+    - Decision: Target Windows 10/11 only for initial release
+    - Decision: Use @nut-tree/nut-js for research UI automation (cross-platform foundation for future)
+    - Decision: Linux and macOS support deferred to phase 2
+    - Rationale: Focus on single platform to accelerate development; nut-js keeps future expansion feasible
+    - _Requirements: 5.2, 5.7.1, 5.7.6_
+  
+  - [ ] 0.6 Select or build evaluation simulator
+    - Decision: Build minimal custom Python simulator using PokerKit library for game rules
+    - Features: HU NLHE support, deterministic RNG, hand history export, API interface
+    - Opponent types: Fixed-strategy bots (tight-aggressive 20/16, loose-passive 45/10, calling station 60/5)
+    - Rationale: Full control over test environment, reproducible results, no external dependencies
+    - _Requirements: 9.1, 9.2, 9.6_
+
 - [ ] 1. Set up project structure and core interfaces
-  - Create directory structure for vision, solver, agents, strategy, executor, logger, and shared modules
+  - Create monorepo structure: /orchestrator (Node.js/TS), /vision-service (Python), /solver-service (Python), /shared
   - Define TypeScript interfaces for core types: Card, Action, Position, Street, GameState, RNG
-  - Implement configuration schema and validation using JSON Schema
-  - Set up build system with pinned dependencies for reproducible builds
-  - Set up Rust/C++/Python solver service with gRPC interface (TypeScript as orchestrator only)
+  - Implement configuration schema and validation using JSON Schema (ajv library)
+  - Set up build system: pnpm workspaces, esbuild for TS, Poetry for Python, Docker multi-stage builds
+  - Set up gRPC interfaces between Node.js orchestrator and Python microservices (vision, solver)
+  - Pin all dependencies: package.json (exact versions), poetry.lock, Dockerfile base images with SHA256
   - _Requirements: 0.1, 10.2_
 
 - [ ] 2. Implement Configuration Manager
@@ -36,16 +94,17 @@
   - [ ] 3.1 Create layout pack system
     - Define LayoutPack JSON schema with ROI definitions and version field
     - Implement layout pack loader with version validation
-    - Add DPI and theme calibration routine
-    - Create sample layout packs for common poker platforms
+    - Add DPI and theme calibration routine using reference anchor detection
+    - Create sample layout packs for custom simulator (from task 0.6)
     - _Requirements: 1.5_
   
   - [ ] 3.2 Implement frame capture and element extraction
-    - Integrate screen capture library
-    - Implement ROI-based extraction for cards, stacks, pot, buttons
-    - Add ONNX-Runtime CNN models for card rank/suit and stack digit recognition
-    - Preload ONNX models and warm sessions on startup to avoid first-hand latency spikes
-    - Keep template matching and OCR as fallback for unsupported themes
+    - Integrate MSS library for screen capture (target 60fps capability)
+    - Implement ROI-based extraction using OpenCV cv2.imread and slicing
+    - Integrate ONNX Runtime with card classification model (52-class output) and digit recognition model (15-class: 0-9, K, M, B, comma, decimal)
+    - Preload ONNX models and warm inference sessions on startup to avoid first-hand latency spikes
+    - Implement Tesseract OCR fallback for stack/pot values when CNN confidence <0.995
+    - Build or source ONNX models: Card classifier (~5MB, MobileNetV3), Digit classifier (~2MB, CRNN)
     - _Requirements: 1.1, 1.3_
   
   - [ ] 3.3 Add confidence scoring and occlusion detection
@@ -79,19 +138,28 @@
     - Test occlusion gating and state-sync checks
     - _Requirements: 1.2, 1.6, 1.7, 1.8, 1.9_
 
-- [ ] 4. Implement GTO Solver
+- [ ] 4. Implement GTO Solver (Phase 1: Precomputed + Heuristics)
   - [ ] 4.1 Create cache system for precomputed solutions
     - Define state fingerprinting algorithm with fields: street, positions, stacks bucketed, pot, blinds, board cards, action history discretized, SPR, version byte
-    - Implement cache storage format (compressed binary)
-    - Create cache loader and query interface
-    - Build sample cache for common preflop and flop situations
-    - Preload preflop and flop caches on startup to avoid first-hand latency spikes
+    - Implement cache storage format (compressed JSON or msgpack for phase 1)
+    - Create cache loader and query interface with fuzzy matching for nearest stack/pot bucket
+    - Build preflop range cache: Import GTO ranges from published sources (Upswing, GTOWizard free charts) or export from PioSOLVER trial
+    - Preload preflop cache on startup to avoid first-hand latency spikes
     - _Requirements: 2.1, 2.6_
   
-  - [ ] 4.2 Implement subgame solver
-    - Integrate CFR algorithm library or implement basic CFR
-    - Add game tree abstraction (card bucketing, action abstraction)
-    - Implement budget-aware solving with early stopping
+  - [ ] 4.2 Implement postflop heuristic solver (Phase 1)
+    - Implement equity calculation using PokerKit equity evaluator
+    - Create rule-based decision trees: c-bet frequency by board texture, pot odds for draws, value-bet-or-check equity thresholds
+    - Add position-aware adjustments (IP vs OOP aggression factors)
+    - Return GTOSolution-compatible output with heuristic-derived action frequencies
+    - Target: <400ms for equity calc + heuristic evaluation
+    - _Requirements: 2.2_
+  
+  - [ ] 4.2b Integrate CFR subgame solver (Phase 2 - optional)
+    - Integrate OpenSpiel CFR solver or PokerKit solver
+    - Add game tree abstraction (card bucketing via k-means on equity distributions, action abstraction to 3-4 bet sizes)
+    - Implement budget-aware solving with early stopping when 400ms budget exhausted
+    - Cache solved subgames for reuse within session
     - _Requirements: 2.2_
   
   - [ ] 4.3 Add deep-stack adjustments
@@ -109,34 +177,41 @@
 - [ ] 5. Implement Agent Coordinator and LLM integration
   - [ ] 5.1 Create LLM agent interface and prompt system
     - Define AgentOutput interface with reasoning, recommendation, sizing, confidence
-    - Implement prompt template system with persona injection
-    - Create sample personas (GTO purist, exploitative aggressor, risk-averse)
+    - Implement prompt template system with persona injection and game state formatting
+    - Create three personas mapped to models from task 0.4:
+      - "GTO Purist" → GPT-4o-mini: Emphasizes equilibrium play, range balance, unexploitability
+      - "Exploitative Aggressor" → Claude 3.5 Haiku: Looks for opponent weaknesses, suggests deviations
+      - "Risk Manager" → GPT-4o (selective use): Conservative EV calculations, bankroll considerations
+    - Include opponent statistics in prompts when available (VPIP, PFR, 3bet, fold-to-cbet)
     - _Requirements: 3.1_
   
   - [ ] 5.2 Implement parallel agent querying
-    - Set up concurrent API calls to multiple LLM providers
-    - Add timeout handling (3s per agent)
-    - Implement retry logic for transient failures
+    - Set up concurrent API calls using Promise.all() to OpenAI and Anthropic SDKs
+    - Add timeout handling (3s per agent using AbortController)
+    - Implement exponential backoff retry logic for 429/500 errors (max 1 retry to preserve time budget)
+    - Add API key rotation support for rate limit distribution
     - _Requirements: 3.2_
   
   - [ ] 5.3 Add JSON schema validation
-    - Define strict output schema for agent responses
-    - Implement schema validator
-    - Discard malformed outputs and count toward timeout
+    - Define strict output schema for agent responses using JSON Schema
+    - Implement schema validator using ajv library with strict mode
+    - Discard malformed outputs and count toward timeout (log warning with agent name and raw output)
+    - Gracefully handle partial outputs when agent reasoning is valid but recommendation malformed
     - _Requirements: 3.7_
   
   - [ ] 5.4 Implement agent weighting and aggregation
-    - Create weighted voting system based on confidence scores
-    - Implement Brier score tracking per agent
-    - Add calibration method using labeled validation set
-    - Generate AggregatedAgentOutput with consensus metric
+    - Create weighted voting system: initial weights [0.33, 0.33, 0.34], updated per Brier scores
+    - Implement Brier score tracking per agent across all decisions (store in session metrics)
+    - Add calibration method using labeled validation set (minimum 1000 hands for statistical significance)
+    - Generate AggregatedAgentOutput with consensus metric (0-1 based on action distribution entropy)
     - _Requirements: 3.4, 3.5_
   
   - [ ] 5.5 Add cost controls and circuit breaker for LLM agents
-    - Implement per-decision token and time caps
-    - Drop or degrade agents under budget pressure
-    - Track token usage and cost per hand
-    - Add circuit breaker: trip after N consecutive timeouts/errors, force α=1.0 for M hands
+    - Implement per-decision token counting: estimate input tokens (state JSON ~400-600), cap output at 150 tokens
+    - Track cumulative cost per session: ($0.15/1M input + $0.60/1M output) for GPT-4o-mini, ($0.25/1M + $1.25/1M) for Haiku, ($2.50/1M + $10/1M) for GPT-4o
+    - Drop GPT-4o agent if per-hand cost exceeds $0.10 or session cost exceeds $50
+    - Add circuit breaker: trip after 5 consecutive timeouts/errors per agent, force α=1.0 (GTO-only) if all agents tripped
+    - Alert operator when circuit breaker trips
     - _Requirements: 4.6_
   
   - [ ] 5.6 Write unit tests for agent JSON schema validator
@@ -216,46 +291,55 @@
 
 - [ ] 9. Implement Action Executor
   - [ ] 9.1 Create simulator/API executor
-    - Implement executeSimulator() for direct API calls
-    - Implement executeAPI() for REST/WebSocket interfaces
-    - Add action translation logic (decision → interface commands)
+    - Implement executeSimulator() for direct API calls to custom Python simulator (from task 0.6)
+    - Implement executeAPI() for REST/WebSocket interfaces to external platforms with API support
+    - Add action translation logic (StrategyDecision → simulator API commands)
+    - Define API interface contract: POST /action with {handId, action, amount?}
     - _Requirements: 5.1_
   
-  - [ ] 9.2 Add research UI mode with compliance checks
-    - Gate research UI behind build flag --research-ui (default off)
-    - Implement executeResearchUI() using OS-level automation
-    - Add environment validation against allowlist
-    - Enforce compliance: refuse execution on prohibited sites
+  - [ ] 9.2 Add research UI mode with compliance checks (Windows only, Phase 1)
+    - Gate research UI behind build flag --research-ui (default off in package.json scripts)
+    - Implement executeResearchUI() using @nut-tree/nut-js for mouse/keyboard automation
+    - Add environment validation: check active window title against config.execution.researchUIAllowlist
+    - Enforce compliance: refuse execution if window title not in allowlist, log ComplianceError with detected window
+    - Add startup banner when research UI mode enabled: "RESEARCH UI MODE - Only use on permitted platforms"
     - _Requirements: 5.2, 5.3, 0.2, 0.3, 0.4_
   
   - [ ] 9.3 Implement action verification
-    - Capture post-action frame and parse state
-    - Define strict equality rules for expected state comparison
-    - Re-evaluate once on mismatch with bounded retry, then halt
+    - Capture post-action frame using vision service (wait 500ms for UI update)
+    - Parse state and compare to expected state: pot size changed by bet amount, stack reduced, action history updated
+    - Define strict equality rules: pot ±1bb tolerance, stack ±1bb tolerance, action type exact match
+    - Re-evaluate once on mismatch with bounded retry (wait additional 500ms, re-capture), then halt with VerificationError
     - _Requirements: 5.4, 5.5_
   
   - [ ] 9.4 Add bet sizing precision
-    - Support fold, check, call, raise with exact amounts
-    - Implement bet sizing from discrete set
+    - Support fold, check, call actions via button clicks
+    - Implement raise/bet with exact amounts: click raise button, clear input field, type amount, confirm
+    - Implement bet sizing from discrete set (map continuous recommendation to nearest allowed size)
+    - Handle all-in as special case: detect all-in button or max bet size
     - _Requirements: 5.6_
 
-  - [ ] 9.5 Implement Window Manager
-    - Create window detection using OS APIs (Windows: EnumWindows, Linux: xdotool)
-    - Add window validation against process names and titles
-    - Implement coordinate conversion from ROI to screen space
+  - [ ] 9.5 Implement Window Manager (Windows Phase 1)
+    - Create window detection using Windows API via edge-js or node-ffi-napi (EnumWindows, GetWindowText)
+    - Alternative: Use @nut-tree/nut-js screen.findOnScreen() with window title patterns
+    - Add window validation: match process name (process.name) and title (regex patterns) from layout pack
+    - Implement coordinate conversion from ROI (relative to window) to screen space (window.position + ROI offset)
+    - Add window.focus() call before any click to ensure foreground status
     - _Requirements: 5.7.1, 5.7.2, 5.7.5_
 
   - [ ] 9.6 Extend Vision System for action buttons
-    - Add template matching for action buttons (fold/check/call/raise)
-    - Implement turn state detection (timer, active player indicators)
-    - Update VisionOutput interface with button locations
+    - Add template matching for action buttons using OpenCV matchTemplate with templates from layout pack
+    - Implement turn state detection: look for timer animation, highlighted player border, or "Your turn" text via OCR
+    - Update VisionOutput interface with actionButtons map and turnState object
+    - Define ButtonInfo with screenCoords, isEnabled (color-based detection), isVisible, confidence, text (OCR of button label)
     - _Requirements: 5.7.3, 5.7.4_
 
   - [ ] 9.7 Enhance research UI executor
-    - Implement window focus management
-    - Add turn waiting logic with timeout
-    - Create cross-platform mouse/keyboard automation
-    - Handle bet sizing input fields
+    - Implement window focus management using nut-js window.focus() or Windows SetForegroundWindow
+    - Add turn waiting logic: poll vision.detectTurnState() every 200ms, timeout after 30s (fold equity lost)
+    - Create cross-platform mouse/keyboard automation using nut-js mouse.click(), keyboard.type()
+    - Handle bet sizing input fields: triple-click to select all, type amount, press Enter or click confirm button
+    - Add randomized human-like delays: 800ms-1500ms between decision and click, 50ms-200ms between keystrokes
     - _Requirements: 5.7.6, 5.7.7_
 
 - [ ] 10. Implement Hand History Logger
@@ -371,22 +455,32 @@
 
 - [ ] 15. Create evaluation framework
   - [ ] 15.1 Implement offline evaluation smoke test
-    - Create minimal simulator interface for smoke testing
-    - Implement basic opponent (tight-aggressive or GTO)
-    - Track win rate with 95% confidence intervals
+    - Use custom Python simulator from task 0.6 with PokerKit game engine
+    - Implement three fixed-strategy opponents:
+      - Tight-Aggressive (20% VPIP, 16% PFR): folds weak hands, aggressive with strong hands
+      - Loose-Passive (45% VPIP, 10% PFR): calls frequently, rarely raises
+      - Calling Station (60% VPIP, 5% PFR): calls almost everything, minimal aggression
+    - Run 10,000 hand smoke test (3,333 hands vs each opponent, ~2-4 hours runtime)
+    - Track win rate with 95% confidence intervals using t-distribution
     - Wire evaluation targets: ≥3bb/100 vs static pool, ≥0bb/100 vs mixed-GTO, ε≤0.02
+    - Generate report: win rate per opponent, aggregate bb/100, latency P50/P95/P99, cost per hand
     - _Requirements: 9.1, 9.2, 9.6, 9.7, 9.8_
   
   - [ ] 15.1b Expand offline evaluation to full 10M hand suite (optional)
-    - Add full opponent pool (tight-aggressive, loose-passive, GTO, mixed-GTO)
-    - Run 10M hand simulations
-    - Measure exploitability vs baseline CFR bot
+    - Add GTO baseline opponent using preflop ranges + heuristics (mirror of bot's Phase 1 solver)
+    - Add mixed-GTO opponent (80% GTO, 20% random deviations)
+    - Run 10M hand simulations (2M hands per opponent, ~200-300 hours runtime)
+    - Measure exploitability: play bot against itself, verify win rate ≈0 bb/100
+    - Compare against baseline CFR bot: import published CFR strategy, measure win rate
+    - Generate academic-style report with tables, confidence intervals, and strategy analysis
     - _Requirements: 9.1, 9.2, 9.6, 9.7, 9.8_
   
   - [ ] 15.2 Implement shadow mode harness
-    - Compute decisions without executing actions
-    - Support private/sim datasets only (no scraped hands from prohibited sites)
-    - Create harness for running shadow mode sessions
+    - Create dataset loader for hand histories in ACPC format
+    - Build harness: replay hand states, invoke bot decision pipeline without execution, compare to actual actions
+    - Support private/sim datasets only (no scraped hands from prohibited sites - verify source provenance)
+    - Implement decision comparison metrics: exact match rate, EV difference (estimated via equity calculations)
+    - Target: 1000 hands minimum for validation, 100k hands for comprehensive evaluation
     - _Requirements: 9.3_
   
   - [ ] 15.2b Run full shadow mode evaluation (optional)
@@ -447,3 +541,47 @@
     - Explain how to create new layout packs
     - Document evaluation procedures
     - _Requirements: 9.1, 9.2, 9.3_
+
+---
+
+## Implementation Milestones
+
+### Milestone 1: Foundation (Tasks 0-2)
+**Goal**: Establish technology stack and configuration infrastructure  
+**Completion criteria**: Config manager loads/validates/hot-reloads configuration, all dependencies pinned  
+**Estimated effort**: 1-2 weeks
+
+### Milestone 2: Perception Pipeline (Task 3)
+**Goal**: Vision system extracts game state with required accuracy and latency  
+**Completion criteria**: 99.5% card recognition accuracy, <50ms extraction latency @ P95, SafeAction policy tested  
+**Estimated effort**: 3-4 weeks
+
+### Milestone 3: Decision Core (Tasks 4-8)
+**Goal**: GTO solver + LLM agents + strategy blending produce decisions within time budget  
+**Completion criteria**: Preflop ranges cached, postflop heuristics implemented, 3 LLM agents integrated, 2s end-to-end @ P95  
+**Estimated effort**: 4-6 weeks
+
+### Milestone 4: Execution & Logging (Tasks 9-10)
+**Goal**: Execute actions via simulator/UI and persist comprehensive logs  
+**Completion criteria**: Simulator API executor working, research UI executor tested on custom simulator, hand history logger persisting all fields  
+**Estimated effort**: 3-4 weeks
+
+### Milestone 5: Reliability & Observability (Tasks 11-14)
+**Goal**: System handles errors gracefully and provides operational visibility  
+**Completion criteria**: Health monitor detects failures, safe mode locks executor, metrics tracked per module, panic stop tested  
+**Estimated effort**: 2-3 weeks
+
+### Milestone 6: Evaluation & MVP (Tasks 15-16)
+**Goal**: Validate system performance against targets and create deployable artifacts  
+**Completion criteria**: 10k hand smoke test passes (≥3bb/100 vs static pool), Docker containers built, CI pipeline green  
+**Estimated effort**: 2-3 weeks
+
+**Total Phase 1 estimate**: 15-22 weeks (4-5.5 months)
+
+### Phase 2 Enhancements (Optional)
+- Task 4.2b: CFR subgame solver integration
+- Task 8.6: Opponent modeling statistics
+- Task 15.1b: 10M hand evaluation suite
+- Cross-platform support (Linux, macOS)
+
+**Phase 2 estimate**: 8-12 weeks additional
