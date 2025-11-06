@@ -147,6 +147,30 @@ Task 0 establishes concrete technology decisions to eliminate ambiguity and enab
     - Preload preflop cache on startup to avoid first-hand latency spikes
     - _Requirements: 2.1, 2.6_
   
+  - [ ] 4.2 Implement preflop range loading
+    - Load precomputed preflop ranges from JSON
+    - Implement range selection based on effective stack depth
+    - Add position-based range adjustments
+    - _Requirements: 2.1, 2.3_
+    
+  - [ ] 4.3 Add deep-stack adjustments
+    - Implement SPR-based strategy adjustments
+    - Add dynamic bet sizing for deep stack play
+    - Create stack-to-pot ratio awareness
+    - _Requirements: 2.4_
+    
+  - [ ] 4.4 Implement solution caching and timeout handling
+    - Add LRU cache for recent solutions
+    - Implement fallback to closest match on timeout
+    - Add performance metrics for cache hit rate
+    - _Requirements: 2.6_
+    
+  - [ ] 4.5 Standardize solver output format
+    - Define consistent action probability interface
+    - Add regret and EV calculations
+    - Implement solution serialization
+    - _Requirements: 2.5_
+  
   - [ ] 4.2 Implement postflop heuristic solver (Phase 1)
     - Implement equity calculation using PokerKit equity evaluator
     - Create rule-based decision trees: c-bet frequency by board texture, pot odds for draws, value-bet-or-check equity thresholds
@@ -179,11 +203,28 @@ Task 0 establishes concrete technology decisions to eliminate ambiguity and enab
     - Define AgentOutput interface with reasoning, recommendation, sizing, confidence
     - Implement prompt template system with persona injection and game state formatting
     - Create three personas mapped to models from task 0.4:
-      - "GTO Purist" → GPT-4o-mini: Emphasizes equilibrium play, range balance, unexploitability
-      - "Exploitative Aggressor" → Claude 3.5 Haiku: Looks for opponent weaknesses, suggests deviations
-      - "Risk Manager" → GPT-4o (selective use): Conservative EV calculations, bankroll considerations
-    - Include opponent statistics in prompts when available (VPIP, PFR, 3bet, fold-to-cbet)
-    - _Requirements: 3.1_
+      1. GTO-Exploitative Hybrid (GPT-4o-mini): Balances GTO and exploitative play
+      2. Hand Reading Specialist (Claude 3.5 Haiku): Focuses on opponent modeling
+      3. Meta-Game Analyst (GPT-4o): Analyzes long-term game dynamics
+    - _Requirements: 3.1, 3.2_
+    
+  - [ ] 5.5 Implement agent debate protocol
+    - Create structured debate format between agents
+    - Add consensus mechanism for disagreements
+    - Implement confidence-weighted voting
+    - _Requirements: 3.3_
+    
+  - [ ] 5.6 Add agent confidence scoring
+    - Implement self-assessment prompts
+    - Track historical accuracy by agent
+    - Create confidence calibration system
+    - _Requirements: 3.4_
+    
+  - [ ] 5.7 Handle agent timeouts
+    - Implement per-agent time budgets
+    - Add fallback to cached responses
+    - Create timeout recovery procedures
+    - _Requirements: 3.6_
   
   - [ ] 5.2 Implement parallel agent querying
     - Set up concurrent API calls using Promise.all() to OpenAI and Anthropic SDKs
@@ -257,6 +298,24 @@ Task 0 establishes concrete technology decisions to eliminate ambiguity and enab
     - Implement blend() method: α × GTO + (1-α) × Exploit
     - Add runtime α adjustment within bounds [0.3, 0.9]
     - _Requirements: 4.2_
+    
+  - [ ] 8.4 Implement dynamic α adjustment
+    - Add opponent modeling for exploitability
+    - Create session history analysis
+    - Implement α decay/boost based on game flow
+    - _Requirements: 4.2_
+    
+  - [ ] 8.5 Add exploitability cap
+    - Implement maximum exploitability threshold
+    - Create risk management system
+    - Add dynamic adjustment based on stack depth
+    - _Requirements: 4.3_
+    
+  - [ ] 8.6 Handle edge cases
+    - Implement all-in decision tree
+    - Add bubble factor calculations
+    - Create ICM-aware final table play
+    - _Requirements: 4.4_
   
   - [ ] 8.2 Implement action selection and bet sizing
     - Create selectAction() using seeded RNG to sample from distribution
@@ -294,6 +353,24 @@ Task 0 establishes concrete technology decisions to eliminate ambiguity and enab
     - Implement executeSimulator() for direct API calls to custom Python simulator (from task 0.6)
     - Implement executeAPI() for REST/WebSocket interfaces to external platforms with API support
     - Add action translation logic (StrategyDecision → simulator API commands)
+    
+  - [ ] 9.4 Implement multi-platform support
+    - Create platform abstraction layer
+    - Add configuration for platform-specific parameters
+    - Implement platform detection and auto-configuration
+    - _Requirements: 5.4_
+    
+  - [ ] 9.5 Add action verification
+    - Implement post-action state validation
+    - Add discrepancy detection and correction
+    - Create recovery procedures for failed actions
+    - _Requirements: 5.2_
+    
+  - [ ] 9.6 Develop error recovery
+    - Implement state synchronization
+    - Add auto-recovery procedures
+    - Create fail-safe mechanisms
+    - _Requirements: 5.5_
     - Define API interface contract: POST /action with {handId, action, amount?}
     - _Requirements: 5.1_
   
