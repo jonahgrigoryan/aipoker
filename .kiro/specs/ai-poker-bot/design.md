@@ -96,7 +96,7 @@ graph TB
 
 2. **Decision Phase** (Target: 1800ms total)
    - Time Budget Tracker initializes with 2000ms deadline, allocates budgets
-   - GTO Solver queries cache or runs subgame solve (400ms max)
+   - GTO Solver queries cache or runs heuristic evaluation (400ms max); Phase 2 adds optional CFR subgame solve
    - Agent Coordinator queries 3 LLM agents in parallel (3000ms timeout, but preempted by budget)
    - Both paths run concurrently; Strategy Engine waits for both or timeout
 
@@ -148,7 +148,7 @@ interface BotConfig {
     models: Array<{
       name: string;
       provider: 'openai' | 'anthropic' | 'local';
-      modelId: string;
+      modelId: string;  // Phase 1: 'gpt-4o-mini', 'claude-3-5-haiku-20241022', 'gpt-4o'
       persona: string;  // strategic prior description
       promptTemplate: string;
     }>;
@@ -209,10 +209,12 @@ class ConfigurationManager {
 **Responsibility**: Capture frames, extract poker game elements, report confidence and latency
 
 **Architecture**:
-- **Frame Capture**: Interfaces with screen capture API or camera feed
+- **Frame Capture**: MSS library for cross-platform screen capture (Windows Phase 1, Linux/macOS Phase 2)
 - **ROI Extraction**: Uses layout pack to define regions for cards, stacks, pot, buttons
-- **OCR/Template Matching**: Recognizes card ranks/suits, parses numeric values
-- **Confidence Scoring**: Per-element confidence based on match quality
+- **Card Recognition**: ONNX Runtime with CNN models (MobileNetV3 for card classification: 52-class rank+suit)
+- **Digit Recognition**: ONNX Runtime with CRNN model for stack/pot parsing (0-9, K, M, B suffixes)
+- **OCR Fallback**: Tesseract OCR 5.x for unsupported themes when CNN confidence <0.995
+- **Confidence Scoring**: Per-element confidence based on model output probabilities
 
 **Interface**:
 ```typescript
@@ -277,7 +279,9 @@ class VisionSystem {
 - Layout packs are JSON files defining ROI coordinates, scaling factors, and theme-specific templates
 - Confidence gating happens at Parser level to keep Vision System pure extraction
 - Latency tracking uses high-resolution timers (performance.now() or equivalent)
-- Template matching for cards uses precomputed hash tables for speed
+- ONNX models preloaded on startup and warmed with inference sessions to avoid first-hand latency spikes
+- Card recognition via ONNX Runtime CNN inference (MobileNetV3), not template hash tables
+- Template matching used for action buttons and UI elements, not card recognition
 
 **LayoutPack Schema** (Extended for Research UI):
 ```typescript
@@ -389,7 +393,8 @@ class GameStateParser {
 
 **Architecture**:
 - **Cache Layer**: Precomputed solutions for preflop and common flop textures (stored as compressed strategy tables)
-- **Subgame Solver**: Real-time CFR or linear programming solver for uncached situations
+- **Heuristic Solver (Phase 1)**: Rule-based postflop decision trees using PokerKit equity evaluator (c-bet frequency, pot odds, position adjustments)
+- **Subgame Solver (Phase 2 - Optional)**: Real-time CFR solver via OpenSpiel for uncached situations
 - **Abstraction Engine**: Reduces game tree complexity (card bucketing, action abstraction)
 
 **Interface**:
@@ -402,7 +407,7 @@ interface GTOSolution {
   }>;
   exploitability: number;
   computeTime: number;
-  source: 'cache' | 'subgame';
+  source: 'cache' | 'heuristic' | 'subgame';  // Phase 1: cache or heuristic; Phase 2 adds subgame
 }
 
 class GTOSolver {
@@ -415,7 +420,8 @@ class GTOSolver {
 
 **Design Decisions**:
 - Cache uses state fingerprint (cards + pot + stacks bucketed) as key
-- Subgame solve uses iterative CFR with early stopping when budget exhausted
+- Phase 1: Heuristic solver uses PokerKit equity evaluator + rule-based decision trees (c-bet, value-bet thresholds, pot odds)
+- Phase 2 (optional): Subgame solve uses iterative CFR via OpenSpiel with early stopping when budget exhausted
 - Deep-stack adjustments: when effective stack >100bb, use different action abstractions (more bet sizes)
 - If budget exceeded, return cached policy for closest match or SafeAction if no cache available
 
@@ -474,7 +480,10 @@ class AgentCoordinator {
 
 **Design Decisions**:
 - Prompt template includes: game state JSON, action history, stack sizes, position, legal actions
-- Persona examples: "GTO purist", "Exploitative aggressor", "Risk-averse value player"
+- Phase 1 persona-to-model mapping:
+  - "GTO Purist" → GPT-4o-mini: Emphasizes equilibrium play, range balance, unexploitability
+  - "Exploitative Aggressor" → Claude 3.5 Haiku: Looks for opponent weaknesses, suggests deviations
+  - "Risk Manager" → GPT-4o (selective use): Conservative EV calculations, bankroll considerations
 - Schema enforcement: malformed JSON or missing required fields → discard, count as timeout
 - Timeout handling: agents that don't respond in 3s are excluded from aggregation
 - Weighting: starts uniform, updates after each session using Brier score on actual outcomes
@@ -547,7 +556,7 @@ interface WindowInfo {
   bounds: { x: number; y: number; width: number; height: number };
   isForeground: boolean;
   processName: string;
-  platform: 'windows' | 'linux' | 'macos';
+  platform: 'windows' | 'linux' | 'macos';  // Phase 1: Windows 10/11 only; Phase 2: Linux/macOS
 }
 
 interface ScreenCoords {
@@ -567,7 +576,8 @@ class WindowManager {
 ```
 
 **Design Decisions**:
-- Window detection uses platform-specific APIs (Windows: EnumWindows, Linux: xdotool, macOS: Accessibility APIs)
+- Phase 1 (Windows only): Window detection via @nut-tree/nut-js or Windows API (EnumWindows, GetWindowText)
+- Phase 2 (Linux/macOS): Add platform-specific APIs (Linux: xdotool, macOS: Accessibility APIs)
 - Strict validation against process names and title patterns from layout packs
 - Coordinate conversion accounts for DPI scaling and window positioning
 - Focus management prevents interaction with background windows
@@ -756,12 +766,12 @@ class ActionExecutor {
 ```
 
 **Design Decisions**:
-- Simulator mode: direct API calls to poker simulator (e.g., PokerNow API, custom sim)
+- Simulator mode: direct API calls to custom Python simulator built on PokerKit library (Phase 1 standard)
 - API mode: REST/WebSocket calls to platform API (if available)
-- Research UI mode: requires explicit allowlist; uses OS-level input automation (mouse/keyboard)
+- Research UI mode: requires explicit allowlist; uses @nut-tree/nut-js for OS-level input automation (mouse/keyboard)
 - Verification: capture post-action frame, parse state, compare to expected outcome
 - On mismatch: re-evaluate once (maybe vision error), then halt and alert
-- Research UI includes randomized timing (1-3s delay) to simulate human behavior
+- Research UI includes randomized timing (800ms-1500ms delay) to simulate human behavior
 
 **Compliance Enforcement**:
 ```typescript
@@ -1038,19 +1048,21 @@ Actions:
 ### Evaluation Tests
 
 **Offline Evaluation**:
-- 10M hands vs static opponent pool (tight-aggressive, loose-passive, GTO)
-- Target: ≥3bb/100 with 95% CI not crossing 0
-- Target: ≥0bb/100 vs mixed GTO benchmark within 95% CI
-- Measure exploitability vs baseline CFR bot (target: ε≤0.02)
+- Phase 1 (Smoke Test): 10k hands vs static opponent pool (tight-aggressive 20/16, loose-passive 45/10, calling station 60/5)
+- Phase 2 (Full Suite - Optional): 10M hands vs expanded pool including GTO baseline and mixed-GTO opponents
+- Target: ≥3bb/100 with 95% CI not crossing 0 vs static pool
+- Target: ≥0bb/100 vs mixed GTO benchmark within 95% CI (Phase 2)
+- Measure exploitability vs published GTO baseline (Phase 1) / baseline CFR bot (Phase 2): target ε≤0.02
 
 **Shadow Mode**:
-- 100k hands online, compute decisions but don't execute
-- Compare bot decisions to human decisions
+- Phase 1: 1k hands minimum for validation on private/simulator datasets
+- Phase 2 (Optional): 100k hands online, compute decisions but don't execute
+- Compare bot decisions to baseline decisions
 - Measure agreement rate and EV difference
 
 **A/B Tests**:
 - GTO-only (α=1.0) vs Blend (α=0.6)
-- No subgame solve vs subgame solve
+- Phase 2 (Optional): No subgame solve vs subgame solve
 - Different agent personas
 - Report win rate difference with confidence intervals
 

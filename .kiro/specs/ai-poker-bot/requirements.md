@@ -58,7 +58,7 @@ This document specifies the requirements for an AI Poker Bot system that combine
 #### Acceptance Criteria
 
 1. THE GTO Solver SHALL implement cache-first policy for preflop and common flop situations
-2. WHEN a decision point requires real-time computation, THE GTO Solver SHALL allocate maximum 400 milliseconds for local subgame solve
+2. WHEN a decision point requires real-time computation, THE GTO Solver SHALL allocate maximum 400 milliseconds for heuristic evaluation (Phase 1) or local subgame solve via CFR (Phase 2 optional)
 3. THE GTO Solver SHALL support preflop, flop, turn, and river decision points with appropriate abstractions
 4. WHEN effective stack exceeds 100 big blinds, THE GTO Solver SHALL apply deep-stack adjustments to strategy calculations
 5. THE GTO Solver SHALL output action probabilities, expected values, and regret deltas for all available actions
@@ -114,7 +114,7 @@ This document specifies the requirements for an AI Poker Bot system that combine
 1. THE system SHALL detect opened poker GUI windows by title/process name patterns
 2. THE system SHALL validate detected windows against allowlist before interaction
 3. THE system SHALL identify when it is the hero's turn to act
-4. THE system SHALL locate action buttons (fold, check, call, raise) on screen with >99% accuracy
+4. THE system SHALL locate action buttons (fold, check, call, raise) on screen with >95% accuracy; empirical validation target >99%
 5. THE system SHALL convert layout ROI coordinates to screen coordinates for clicking
 6. THE system SHALL execute actions through mouse clicks with randomized timing (1-3s)
 7. WHEN button detection fails, THE system SHALL fall back to SafeAction and alert operator
@@ -165,14 +165,14 @@ This document specifies the requirements for an AI Poker Bot system that combine
 
 #### Acceptance Criteria
 
-1. THE system SHALL support offline evaluation mode with at least 10 million hands against a static opponent pool
+1. THE system SHALL support offline evaluation mode with at least 10,000 hands (Phase 1 smoke test) or 10 million hands (Phase 2 optional) against a static opponent pool
 2. WHEN offline evaluation completes, THE system SHALL report big blinds per 100 hands, exploitability, and latency distributions
-3. THE system SHALL support online shadow mode where decisions are computed but not executed for at least 100,000 hands
-4. THE system SHALL support A/B testing configurations including GTO-only vs blend and no-subgame vs subgame comparisons
+3. THE system SHALL support online shadow mode where decisions are computed but not executed for at least 1,000 hands (Phase 1 minimum) or 100,000 hands (Phase 2 optional)
+4. THE system SHALL support A/B testing configurations including GTO-only vs blend; Phase 2 (optional): no-subgame vs subgame comparisons
 5. WHEN A/B testing completes, THE system SHALL report results with confidence intervals
 6. THE system SHALL achieve offline win rate of 3 big blinds per 100 hands or greater vs static pool with 95% confidence interval not crossing 0
 7. THE system SHALL achieve win rate of 0 big blinds per 100 hands or greater within 95% confidence interval against mixed GTO benchmark
-8. THE system SHALL achieve exploitability of 0.02 or less versus a baseline CFR bot of record
+8. THE system SHALL achieve exploitability of 0.02 or less versus published GTO baseline (Phase 1) or baseline CFR bot of record (Phase 2 optional)
 
 ### Requirement 10
 
